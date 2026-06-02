@@ -448,22 +448,37 @@ async function composeThumbnail(bgUrl, d){
   const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
   const ctx=cv.getContext("2d");
   try{ await document.fonts.ready; }catch(e){}
-  // 背景をcoverで描画
+  // 背景をcoverで描画（ブラーでAI生成の文字化けを不可読化＝ボケた写真質感に）
   const img=await loadImg(bgUrl);
   const ar=img.width/img.height, target=W/H;
   let dw,dh,dx,dy;
   if(ar>target){ dh=H; dw=H*ar; dx=(W-dw)/2; dy=0; } else { dw=W; dh=W/ar; dx=0; dy=(H-dh)/2; }
-  ctx.drawImage(img,dx,dy,dw,dh);
-  // 左パネル（不透明）でAIの文字化けを隠し、可読性を確保
-  // 1) 左半分に濃紺の不透明ベース（縦グラデで奥行き）
+  ctx.save();
+  ctx.filter="blur(7px)";
+  const ov=28; // オーバースキャン（ブラーの透明縁を防ぐ）
+  ctx.drawImage(img,dx-ov,dy-ov,dw+ov*2,dh+ov*2);
+  ctx.restore();
+  // 全面スクリム（右側に残る文字化けも沈め、コントラストを確保）
+  const scrim=ctx.createLinearGradient(0,0,W,0);
+  scrim.addColorStop(0,"rgba(8,16,33,0.62)");
+  scrim.addColorStop(1,"rgba(8,16,33,0.34)");
+  ctx.fillStyle=scrim; ctx.fillRect(0,0,W,H);
+  // 上下のビネットで締める
+  const vig=ctx.createLinearGradient(0,0,0,H);
+  vig.addColorStop(0,"rgba(0,0,0,0.20)");
+  vig.addColorStop(0.5,"rgba(0,0,0,0)");
+  vig.addColorStop(1,"rgba(0,0,0,0.30)");
+  ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
+  // 左パネル（不透明）でテキスト可読性を最大化
+  // 1) 左側に濃紺の不透明ベース（縦グラデで奥行き）
   const base=ctx.createLinearGradient(0,0,0,H);
   base.addColorStop(0,"#0d1e3a"); base.addColorStop(1,"#0a1328");
-  ctx.fillStyle=base; ctx.fillRect(0,0,Math.round(W*0.52),H);
+  ctx.fillStyle=base; ctx.fillRect(0,0,Math.round(W*0.50),H);
   // 2) 右へ向けて透明にフェード（画像となじませる）
-  const feather=ctx.createLinearGradient(W*0.52,0,W*0.80,0);
+  const feather=ctx.createLinearGradient(W*0.50,0,W*0.82,0);
   feather.addColorStop(0,"rgba(10,19,40,1)");
   feather.addColorStop(1,"rgba(10,19,40,0)");
-  ctx.fillStyle=feather; ctx.fillRect(Math.round(W*0.52),0,Math.round(W*0.30),H);
+  ctx.fillStyle=feather; ctx.fillRect(Math.round(W*0.50),0,Math.round(W*0.32),H);
   const PAD=64, maxW=W*0.46;
   const FAM="'Hiragino Kaku Gothic ProN','Yu Gothic','Noto Sans JP',sans-serif";
   // アクセントバー
