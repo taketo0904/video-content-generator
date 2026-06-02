@@ -406,14 +406,16 @@ async function generateImage(d){
   const key = $("apiKey").value.trim();
   const model = $("imageModel").value.trim();
   const prompt =
-`${d.imagePrompt}
+`Create a HIGH-QUALITY, professional 16:9 background image for a YouTube thumbnail about "construction industry x AI" for Japanese business owners. Theme hint: ${d.imagePrompt}
 
-Strict requirements:
-- 16:9 horizontal YouTube thumbnail, high quality, clean professional design.
-- White / light background with a single blue accent color. Trustworthy, modern, Japanese business tone.
-- Render this Japanese headline text large and clearly legible: 「${d.catchcopy}」${d.subcopy?`  sub text: 「${d.subcopy}」`:""}
-- No real people / faces. Use abstract architectural and AI motifs (floor plans, houses, simple icons, soft gradients).
-- The Japanese characters must be accurate and readable.`;
+Art direction (very important for quality):
+- Ultra clean, modern, premium corporate look. Sharp focus, crisp details, soft realistic studio lighting, subtle depth of field.
+- Light / white base with a single refined blue accent color. Trustworthy, high-end, minimal.
+- Motifs: architectural floor plans, house line-art, a tablet/laptop, simple AI/data icons, soft gradients. Abstract and tasteful.
+- Balanced composition with visual interest on the RIGHT side, and a calm, relatively empty area on the LEFT ~45% so text can be overlaid later.
+- NO text, NO letters, NO words, NO numbers, NO logos anywhere in the image. Absolutely text-free.
+- No real people or faces.
+- Photorealistic-meets-graphic, magazine cover quality, very high resolution and detail.`;
   const res = await fetch(`${API_BASE}${model}:generateContent?key=${encodeURIComponent(key)}`,{
     method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
@@ -427,6 +429,64 @@ Strict requirements:
   const img = parts.find(p=>p.inlineData?.data);
   if(!img) throw new Error("画像生成: 画像が返りませんでした（画像モデル名を確認してください）");
   return `data:${img.inlineData.mimeType||"image/png"};base64,${img.inlineData.data}`;
+}
+
+// ---- サムネ合成（AI背景 + くっきり日本語テキスト）----
+function loadImg(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
+function wrapLines(ctx, text, maxW){
+  const chars=[...(text||"")]; const lines=[]; let cur="";
+  for(const ch of chars){
+    if(ch==="\n"){ lines.push(cur); cur=""; continue; }
+    if(ctx.measureText(cur+ch).width>maxW && cur){ lines.push(cur); cur=ch; }
+    else cur+=ch;
+  }
+  if(cur) lines.push(cur);
+  return lines;
+}
+async function composeThumbnail(bgUrl, d){
+  const W=1280, H=720;
+  const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+  const ctx=cv.getContext("2d");
+  try{ await document.fonts.ready; }catch(e){}
+  // 背景をcoverで描画
+  const img=await loadImg(bgUrl);
+  const ar=img.width/img.height, target=W/H;
+  let dw,dh,dx,dy;
+  if(ar>target){ dh=H; dw=H*ar; dx=(W-dw)/2; dy=0; } else { dw=W; dh=W/ar; dx=0; dy=(H-dh)/2; }
+  ctx.drawImage(img,dx,dy,dw,dh);
+  // 左側に暗いグラデーション（可読性確保）
+  const g=ctx.createLinearGradient(0,0,W,0);
+  g.addColorStop(0,"rgba(8,14,26,0.92)"); g.addColorStop(0.45,"rgba(8,14,26,0.74)"); g.addColorStop(0.7,"rgba(8,14,26,0.15)"); g.addColorStop(1,"rgba(8,14,26,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const PAD=64, maxW=W*0.56;
+  const FAM="'Hiragino Kaku Gothic ProN','Yu Gothic','Noto Sans JP',sans-serif";
+  // アクセントバー
+  ctx.fillStyle="#3b82f6"; ctx.fillRect(PAD,150,72,8);
+  // キャッチコピー
+  let size=84;
+  ctx.font=`700 ${size}px ${FAM}`;
+  let lines=wrapLines(ctx,d.catchcopy||"",maxW);
+  while((lines.length>3 || (lines.length*size*1.18)>360) && size>48){
+    size-=4; ctx.font=`700 ${size}px ${FAM}`; lines=wrapLines(ctx,d.catchcopy||"",maxW);
+  }
+  ctx.textBaseline="top"; ctx.shadowColor="rgba(0,0,0,0.55)"; ctx.shadowBlur=12; ctx.shadowOffsetY=3;
+  let y=190;
+  for(const ln of lines){
+    ctx.fillStyle="#ffffff"; ctx.fillText(ln,PAD,y); y+=size*1.18;
+  }
+  ctx.shadowColor="transparent";
+  // サブコピー（アクセント帯）
+  if(d.subcopy){
+    const ss=34; ctx.font=`700 ${ss}px ${FAM}`;
+    const tw=ctx.measureText(d.subcopy).width;
+    y+=14;
+    ctx.fillStyle="#2563eb"; ctx.fillRect(PAD,y,tw+32,ss+22);
+    ctx.fillStyle="#ffffff"; ctx.fillText(d.subcopy,PAD+16,y+11);
+  }
+  // ブランドフッター
+  ctx.font=`600 24px ${FAM}`; ctx.fillStyle="rgba(255,255,255,0.82)";
+  ctx.fillText("AI経営研究会 ｜ 建築 × AI 事例", PAD, H-58);
+  return cv.toDataURL("image/png");
 }
 
 // ---- 描画 ----
@@ -525,7 +585,8 @@ async function run(){
 
     setStatus("サムネイル画像を生成中…","loading");
     try{
-      const url = await generateImage(d);
+      const bg = await generateImage(d);
+      const url = await composeThumbnail(bg, d);
       showImage(url);
       setStatus("完了しました","ok");
     }catch(imgErr){
@@ -545,7 +606,7 @@ $("regenThumb").addEventListener("click", async ()=>{
   if(!lastData){ setStatus("先に生成してください","err"); return; }
   $("thumbWrap").innerHTML = `<span class="ph">サムネイル生成中…</span>`;
   setStatus("サムネイルを再生成中…","loading");
-  try{ showImage(await generateImage(lastData)); setStatus("サムネイルを再生成しました","ok"); }
+  try{ const bg=await generateImage(lastData); showImage(await composeThumbnail(bg,lastData)); setStatus("サムネイルを再生成しました","ok"); }
   catch(e){ $("thumbWrap").innerHTML = `<span class="ph">画像生成に失敗</span>`; setStatus("画像生成エラー: "+e.message,"err"); }
 });
 
